@@ -3,21 +3,42 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/jpittis/bincached/pkg/bincached"
 	"github.com/jpittis/binlog/pkg/database"
+	"github.com/siddontang/go-mysql/replication"
 )
 
-type config struct {
-	memcachedHosts []string
-	db             *database.Database
+func main() {
+	config := parseConfig()
+
+	config.Transformer = func(event *replication.RowsEvent) []bincached.CacheItem {
+		if string(event.Table.Table) != "keyval" {
+			return nil
+		}
+		items := make([]bincached.CacheItem, len(event.Rows))
+		for i, row := range event.Rows {
+			key := strconv.Itoa(int(row[0].(int32)))
+			value := []byte(strconv.Itoa(int(row[1].(int32))))
+			items[i] = bincached.CacheItem{Key: key, Value: value}
+		}
+		return items
+	}
+
+	err := bincached.StreamBinlogEvents(config)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func parseConfig() *config {
+func parseConfig() *bincached.Config {
 	memcachedHosts := parseMemcachedHostArgs()
 	db := parseMySQLDatabaseArgs()
-	return &config{memcachedHosts, db}
+	return &bincached.Config{MemcachedHosts: memcachedHosts, DB: db}
 }
 
 func parseMemcachedHostArgs() []string {
